@@ -24,10 +24,12 @@ FHIR_BASE_URL=https://epj.ekstern.dev.nav.no/fhir
 AUTH_ISSUER=https://epj.ekstern.dev.nav.no/oidc
 CLIENT_ID=hackathon-public
 REDIRECT_URI=http://localhost:3100/callback
-SCOPES=openid fhirUser launch patient/Patient.r patient/Encounter.s patient/Observation.cr patient/DocumentReference.c
+SCOPES=openid fhirUser launch patient/Patient.r patient/Encounter.s patient/Condition.s patient/Observation.crs patient/DocumentReference.c
 ```
 
 `hackathon-public` is already registered, so there is nothing to send the host.
+
+The clinical summary requires `patient/Condition.s` and `patient/Observation.s` (included in `.crs` above). Saving a temperature refreshes the summary from the FHIR server, including newly written readings. Values show their LOINC code system and UCUM unit; the trend requires at least three readings in one unit. Mixed units are rejected rather than compared. Journal notes are narrative documents, not measurement readings.
 
 ## 3. Start
 

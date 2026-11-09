@@ -46,6 +46,8 @@ test('UI: landing and error pages share a local, script-free accessible shell', 
     assert.equal(writebackScript.statusCode, 200)
     assert.match(writebackScript.body, /button\.disabled = true/)
     assert.match(writebackScript.body, /body\.location/)
+    assert.match(writebackScript.body, /fetch\('\/app'/)
+    assert.match(writebackScript.body, /current\.replaceChildren/)
 
     const escaped = page('<Patient & clinician>', '<p>Content</p>')
     assert.match(escaped, /<title>&lt;Patient &amp; clinician&gt;<\/title>/)
@@ -85,4 +87,59 @@ test('UI: consultation retains patient context, scope details, readings and laun
     assert.match(response.body, /View all readings &amp; clinical codes \(3\)/)
     assert.match(response.body, /Launch diagnostics/)
     assert.match(response.body, /Progress: 10 of 10 steps OK/)
+})
+
+test('UI: new write-back readings appear in the summary and create a trend at three matching units', async (t) => {
+    const f = await fixture()
+    t.after(f.close)
+    f.measurements.splice(2)
+    const app = await buildApp(
+        f.config,
+        shapeSteps(f, {
+            exchange: async () =>
+                f.tokens({
+                    scope: `${f.config.scopes} patient/Condition.s patient/Observation.cs`,
+                }),
+        }),
+    )
+    t.after(async () => app.close())
+
+    const { state, launchCookie } = await startBrowserLaunch(app, f)
+    const callback = await app.inject({ url: callbackPath(state), cookies: { smart_launch: launchCookie } })
+    const cookies = { smart_session: cookieValue(callback, 'smart_session') }
+    const before = await app.inject({ url: '/app', cookies })
+    const csrf = before.body.match(/name="csrf" value="([A-Za-z0-9_-]+)"/)?.[1]
+    assert.ok(csrf)
+    assert.match(before.body, /2 readings recorded/)
+    assert.doesNotMatch(before.body, /<polyline/)
+
+    const saved = await app.inject({
+        method: 'POST',
+        url: '/app/write',
+        cookies,
+        headers: {
+            origin: new URL(f.config.redirectUri).origin,
+            accept: 'application/json',
+            'content-type': 'application/x-www-form-urlencoded',
+        },
+        payload: new URLSearchParams({ kind: 'temperature', csrf, value: '37.4' }).toString(),
+    })
+    assert.equal(saved.statusCode, 201)
+
+    const after = await app.inject({ url: '/app', cookies })
+    assert.equal(after.statusCode, 200)
+    assert.match(after.body, /class="temperature-value">37\.4 /)
+    assert.match(after.body, /37\.4 degrees Celsius \(Cel\)/)
+    assert.match(after.body, /http:\/\/loinc.org \| 8310-5/)
+    assert.match(after.body, /Unit system: http:\/\/unitsofmeasure.org/)
+    assert.match(after.body, /3 readings recorded/)
+    assert.match(after.body, /<polyline/)
+    assert.equal((after.body.match(/class="chart-marker"/g) ?? []).length, 3)
+    assert.match(after.body, /37\.4 Cel \(http:\/\/unitsofmeasure.org\); http:\/\/loinc.org \| 8310-5/)
+
+    f.measurements[0]!.valueQuantity.code = '[degF]'
+    const mixed = await app.inject({ url: '/app', cookies })
+    assert.match(mixed.body, /Mixed units/)
+    assert.doesNotMatch(mixed.body, /<polyline/)
+    assert.equal(f.created.size, 1, 'Refreshing the summary must not resubmit a write')
 })

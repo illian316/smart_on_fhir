@@ -186,12 +186,7 @@ export function renderClinicalSummary(summary: ClinicalSummary): string {
     const rows = summary.measurements
         .map((measurement) => {
             const quantity = measurement.valueQuantity
-            const codes = measurement.code.coding
-                .map(
-                    (coding) =>
-                        `${escapeHtml(coding.system ?? 'Code system unavailable')} | ${escapeHtml(coding.code ?? 'Code unavailable')}`,
-                )
-                .join('; ')
+            const codes = measurementCodes(measurement)
 
             return (
                 `<li><time>${escapeHtml(measurement.effectiveDateTime)}</time>: ` +
@@ -228,17 +223,19 @@ export function renderClinicalSummary(summary: ClinicalSummary): string {
                 ({ x, y, reading }) =>
                     `<circle class="chart-marker" cx="${x}" cy="${y}" r="4"><title>` +
                     `${escapeHtml(reading.effectiveDateTime)}: ${escapeHtml(reading.valueQuantity.value)} ${unit}` +
+                    ` (${escapeHtml(reading.valueQuantity.system)}); ${measurementCodes(reading)}` +
                     `</title></circle>`,
             )
             .join('')
 
         trend =
-            `<figure><figcaption>Temperature trend (UCUM: ${unit}) / ${readings.length} readings</figcaption>` +
+            `<figure><figcaption>Temperature trend (UCUM: ${unit}) / ${readings.length} readings` +
+            `<br>${measurementCodes(firstReading)}; Unit system: ${escapeHtml(firstReading.valueQuantity.system)}</figcaption>` +
             `<svg class="trend-chart" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 580 180" width="100%" height="180" role="img" aria-label="Temperature over time in ${unit}">` +
             `<path class="chart-grid" d="M45 35H550M45 90H550" fill="none"/>` +
             `<path class="chart-axis" d="M45 20V150H550" fill="none"/>` +
-            `<text class="chart-label" x="0" y="35" font-size="12">${escapeHtml(Math.max(...values))}</text>` +
-            `<text class="chart-label" x="0" y="145" font-size="12">${escapeHtml(minimum)}</text>` +
+            `<text class="chart-label" x="0" y="35" font-size="12">${escapeHtml(Math.max(...values))} ${unit}</text>` +
+            `<text class="chart-label" x="0" y="145" font-size="12">${escapeHtml(minimum)} ${unit}</text>` +
             `<text class="chart-label" x="45" y="172" font-size="12">Earlier</text><text class="chart-label" x="510" y="172" font-size="12">Later</text>` +
             `<path class="chart-area" d="M45 150 ${points.map(({ x, y }) => `L${x} ${y}`).join(' ')} L535 150Z"/>` +
             `<polyline class="chart-line" points="${points.map(({ x, y }) => `${x},${y}`).join(' ')}" fill="none"/>` +
@@ -247,7 +244,8 @@ export function renderClinicalSummary(summary: ClinicalSummary): string {
 
     const latest = readings.at(-1)
     const latestValue = latest
-        ? `<div class="temperature-value">${escapeHtml(latest.valueQuantity.value)} <small>${escapeHtml(latest.valueQuantity.unit)} (${escapeHtml(latest.valueQuantity.code)})</small></div>`
+        ? `<div class="temperature-value">${escapeHtml(latest.valueQuantity.value)} <small>${escapeHtml(latest.valueQuantity.unit)} (${escapeHtml(latest.valueQuantity.code)})</small></div>` +
+          `<p class="measurement-codes">${measurementCodes(latest)}<br>Unit system: ${escapeHtml(latest.valueQuantity.system)}</p>`
         : ''
 
     return (
@@ -259,6 +257,15 @@ export function renderClinicalSummary(summary: ClinicalSummary): string {
             : '<p class="empty-state">No temperature readings recorded.</p>') +
         '</section>'
     )
+}
+
+function measurementCodes(measurement: Measurement): string {
+    return measurement.code.coding
+        .map(
+            (coding) =>
+                `${escapeHtml(coding.system ?? 'Code system unavailable')} | ${escapeHtml(coding.code ?? 'Code unavailable')}`,
+        )
+        .join('; ')
 }
 
 export function temperature(context: Context, celsius: number, effective = new Date()): TemperatureObservation {

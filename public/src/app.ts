@@ -328,7 +328,7 @@ export async function buildApp(config: Config, implementation: Steps = steps): P
             .send(
                 page(
                     'Active consultation',
-                    `<div class="workspace">${chartContent(chart, config, session)}${clinicalContent}</div>` +
+                    `<div class="workspace">${chartContent(chart, config, session)}<div data-clinical-summary>${clinicalContent}</div></div>` +
                         writebackContent(session) +
                         `<details class="panel progress-panel"><summary>Launch diagnostics</summary>${renderChecklist(attempt.checklist())}</details>` +
                         '<script src="/writeback.js" defer></script>',

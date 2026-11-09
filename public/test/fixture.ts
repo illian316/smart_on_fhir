@@ -353,7 +353,15 @@ export async function fixture(): Promise<Fixture> {
                 return outcome(reply, 400, 'invalid')
             }
 
-            return searchset(measurements.filter((m) => m.code.coding.some((coding) => coding.code === code)))
+            const savedMeasurements = [...created.values()]
+                .filter((resource) => resource.resourceType === 'Observation')
+                .map((resource) => MeasurementInputSchema.parse(resource))
+
+            return searchset(
+                [...measurements, ...savedMeasurements].filter((m) =>
+                    m.code.coding.some((coding) => coding.code === code),
+                ),
+            )
         })
     }
 

@@ -37,6 +37,24 @@ document.querySelectorAll('form[data-write-form]').forEach((form) => {
             link.href = body.location
             link.textContent = body.location
             result.append(link)
+
+            if (body.resourceType === 'Observation') {
+                try {
+                    const refreshed = await fetch('/app', { credentials: 'same-origin' })
+
+                    if (!refreshed.ok) throw new Error('Summary refresh failed')
+
+                    const document = new DOMParser().parseFromString(await refreshed.text(), 'text/html')
+                    const updated = document.querySelector('[data-clinical-summary]')
+                    const current = window.document.querySelector('[data-clinical-summary]')
+
+                    if (!updated || !current) throw new Error('Summary is missing')
+
+                    current.replaceChildren(...updated.childNodes)
+                } catch {
+                    result.append(window.document.createTextNode(' Saved, but the summary could not refresh. Reload the page; do not submit the measurement again.'))
+                }
+            }
         } catch (error) {
             result.textContent = error instanceof Error ? error.message : 'Write-back failed.'
         } finally {
