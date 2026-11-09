@@ -1,8 +1,17 @@
 import Fastify, { type FastifyInstance } from 'fastify'
-import { createLocalJWKSet, decodeProtectedHeader, exportJWK, generateKeyPair, jwtVerify, SignJWT } from 'jose'
+import {
+    createLocalJWKSet,
+    decodeProtectedHeader,
+    exportJWK,
+    generateKeyPair,
+    importJWK,
+    jwtVerify,
+    SignJWT,
+    type JWTPayload,
+} from 'jose'
 import assert from 'node:assert/strict'
 import { createHash } from 'node:crypto'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, readFile, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { test, type TestContext } from 'node:test'
@@ -42,6 +51,7 @@ async function setup(t: TestContext, idTokenAudience = CLIENT_ID): Promise<Harne
     const signing = await generateKeyPair('RS256')
     const challenges = new Map<string, string>()
     const assertions: RecordedAssertion[] = []
+    const usedAssertionIds = new Set<string>()
 
     const directory = await mkdtemp(join(tmpdir(), 'smart-pkjwt-test-'))
     const privateJwkPath = join(directory, 'private.jwk.json')
@@ -79,13 +89,26 @@ async function setup(t: TestContext, idTokenAudience = CLIENT_ID): Promise<Harne
         const body = request.body
         const assertion = body.get('client_assertion') ?? ''
 
-        const { payload } = await jwtVerify(assertion, clientKeys, {
-            issuer: CLIENT_ID,
-            subject: CLIENT_ID,
-            audience: `${origin()}/oidc/token`,
-            algorithms: ['RS384'],
-            requiredClaims: ['exp', 'iat', 'jti'],
-        })
+        let payload: JWTPayload
+
+        try {
+            const verified = await jwtVerify(assertion, clientKeys, {
+                issuer: CLIENT_ID,
+                subject: CLIENT_ID,
+                audience: `${origin()}/oidc/token`,
+                algorithms: ['RS384'],
+                requiredClaims: ['exp', 'iat', 'jti'],
+            })
+            payload = verified.payload
+        } catch {
+            return reply.code(401).send({ error: 'invalid_client' })
+        }
+
+        if (typeof payload.jti !== 'string' || usedAssertionIds.has(payload.jti)) {
+            return reply.code(401).send({ error: 'invalid_client' })
+        }
+
+        usedAssertionIds.add(payload.jti)
 
         assertions.push({
             header: decodeProtectedHeader(assertion),
@@ -235,4 +258,65 @@ test('rejects an ID token issued for another client', async (t) => {
         finished.cookies.find((c) => c.name === 'smart_session'),
         undefined,
     )
+})
+
+test('authorization server rejects invalid, expired and replayed client assertions', async (t) => {
+    const { config } = await setup(t)
+    const privateJwk = JSON.parse(await readFile(config.privateJwkPath, 'utf8'))
+    const privateKey = await importJWK(privateJwk, 'RS384')
+    const tokenEndpoint = `${config.issuer}/token`
+    const now = Math.floor(Date.now() / 1000)
+
+    async function assertionFor(options: { audience?: string; expiration?: number; jti: string }): Promise<string> {
+        return new SignJWT({})
+            .setProtectedHeader({ alg: 'RS384', kid: privateJwk.kid, typ: 'JWT' })
+            .setIssuer(CLIENT_ID)
+            .setSubject(CLIENT_ID)
+            .setAudience(options.audience ?? tokenEndpoint)
+            .setIssuedAt(now)
+            .setExpirationTime(options.expiration ?? now + 60)
+            .setJti(options.jti)
+            .sign(privateKey)
+    }
+
+    async function submitAssertion(assertion: string): Promise<Response> {
+        return fetch(tokenEndpoint, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams({
+                grant_type: 'authorization_code',
+                client_id: CLIENT_ID,
+                client_assertion_type: CLIENT_ASSERTION_TYPE,
+                client_assertion: assertion,
+            }),
+        })
+    }
+
+    const malformed = await submitAssertion('not-a-jwt')
+
+    assert.equal(malformed.status, 401)
+    assert.deepEqual(await malformed.json(), { error: 'invalid_client' })
+
+    const wrongAudience = await submitAssertion(
+        await assertionFor({ audience: `${config.issuer}/wrong-token-endpoint`, jti: 'wrong-audience' }),
+    )
+
+    assert.equal(wrongAudience.status, 401)
+    assert.deepEqual(await wrongAudience.json(), { error: 'invalid_client' })
+
+    const expired = await submitAssertion(await assertionFor({ expiration: now - 60, jti: 'expired-assertion' }))
+
+    assert.equal(expired.status, 401)
+    assert.deepEqual(await expired.json(), { error: 'invalid_client' })
+
+    const replayable = await assertionFor({ jti: 'replayed-assertion' })
+    const firstUse = await submitAssertion(replayable)
+
+    assert.equal(firstUse.status, 400, 'A valid assertion reaches the grant check')
+    assert.deepEqual(await firstUse.json(), { error: 'invalid_grant' })
+
+    const replay = await submitAssertion(replayable)
+
+    assert.equal(replay.status, 401)
+    assert.deepEqual(await replay.json(), { error: 'invalid_client' })
 })

@@ -60,6 +60,7 @@ export interface Context {
 export interface Session {
     tokens: Tokens
     context: Context
+    csrfToken: string
     expiresAt: number
     attempt: Attempt
 }

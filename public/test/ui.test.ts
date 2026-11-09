@@ -42,6 +42,11 @@ test('UI: landing and error pages share a local, script-free accessible shell', 
     assert.match(css.body, /max-width: 600px/)
     assert.match(css.body, /prefers-reduced-motion/)
 
+    const writebackScript = await app.inject({ url: '/writeback.js' })
+    assert.equal(writebackScript.statusCode, 200)
+    assert.match(writebackScript.body, /button\.disabled = true/)
+    assert.match(writebackScript.body, /body\.location/)
+
     const escaped = page('<Patient & clinician>', '<p>Content</p>')
     assert.match(escaped, /<title>&lt;Patient &amp; clinician&gt;<\/title>/)
     assert.doesNotMatch(escaped, /<Patient/)
@@ -65,6 +70,9 @@ test('UI: consultation retains patient context, scope details, readings and laun
     })
 
     assert.equal(response.statusCode, 200)
+    const policy = String(response.headers['content-security-policy'])
+    assert.match(policy, /(?:^|; )connect-src 'self'(?:;|$)/)
+    assert.match(policy, /(?:^|; )default-src 'none'(?:;|$)/)
     assert.match(response.body, /class="workspace"/)
     assert.match(response.body, /Synthetic &lt;Patient&gt;/)
     assert.doesNotMatch(response.body, /Synthetic <Patient>/)

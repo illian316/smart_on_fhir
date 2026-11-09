@@ -2,6 +2,7 @@ import assert from 'node:assert/strict'
 import { test } from 'node:test'
 
 import { buildApp } from '../src/app.ts'
+import { steps as productionSteps } from '../src/steps.ts'
 import { TRANSACTION_TTL_MS } from '../src/types.ts'
 
 import { shapeSteps } from './fakes.ts'
@@ -155,4 +156,104 @@ test('Scaffolding: a pending launch expires after the transaction lifetime', asy
     const late = await app.inject({ url: callbackPath(state), cookies: { smart_launch: launchCookie } })
 
     assert.equal(late.statusCode, 400)
+})
+
+test('Break it: callback with the wrong state is refused before token exchange', async (t) => {
+    const f = await fixture()
+    t.after(f.close)
+
+    const app = await buildApp(
+        f.config,
+        shapeSteps(f, {
+            validateCallback: (query, transaction) => productionSteps.validateCallback(query, transaction),
+            exchange: async (config, transaction, code) => productionSteps.exchange(config, transaction, code),
+        }),
+    )
+    t.after(async () => app.close())
+
+    const { state, launchCookie } = await startBrowserLaunch(app, f)
+    const response = await app.inject({
+        url: callbackPath(`${state}-wrong`),
+        cookies: { smart_launch: launchCookie },
+    })
+
+    assert.equal(response.statusCode, 502)
+    assert.equal(f.tokenCalls(), 0, 'A wrong state must be rejected before the token endpoint is called')
+    assert.equal(
+        response.cookies.find((cookie) => cookie.name === 'smart_session'),
+        undefined,
+    )
+})
+
+test('Break it: callback replay is refused before a second token exchange', async (t) => {
+    const f = await fixture()
+    t.after(f.close)
+
+    const app = await buildApp(
+        f.config,
+        shapeSteps(f, {
+            validateCallback: (query, transaction) => productionSteps.validateCallback(query, transaction),
+            exchange: async (config, transaction, code) => productionSteps.exchange(config, transaction, code),
+        }),
+    )
+    t.after(async () => app.close())
+
+    const { authorizeUrl, state, launchCookie } = await startBrowserLaunch(app, f)
+    f.registerCode('single-use-code', authorizeUrl.searchParams.get('code_challenge')!)
+    const callback = callbackPath(state, 'single-use-code')
+    const cookies = { smart_launch: launchCookie }
+    const first = await app.inject({ url: callback, cookies })
+
+    assert.equal(first.statusCode, 302)
+    assert.equal(f.tokenCalls(), 1)
+
+    const replay = await app.inject({ url: callback, cookies })
+
+    assert.equal(replay.statusCode, 400)
+    assert.equal(f.tokenCalls(), 1, 'A replayed callback must not trigger another token request')
+})
+
+test('Break it: an ID token for another client is rejected', async (t) => {
+    const f = await fixture()
+    t.after(f.close)
+
+    let exchanges = 0
+    const idToken = await f.signIdentity({
+        iss: f.config.issuer,
+        aud: 'another-client',
+        sub: 'h1',
+        iat: Math.floor(Date.now() / 1000),
+        exp: Math.floor(Date.now() / 1000) + 300,
+        fhirUser: 'Practitioner/h1',
+    })
+    const app = await buildApp(
+        f.config,
+        shapeSteps(f, {
+            exchange: async () => {
+                exchanges++
+
+                return f.tokens({ id_token: idToken })
+            },
+            verifyIdentity: async (config, discovery, tokens) =>
+                productionSteps.verifyIdentity(config, discovery, tokens),
+        }),
+    )
+    t.after(async () => app.close())
+
+    const { state, launchCookie } = await startBrowserLaunch(app, f)
+    const response = await app.inject({
+        url: callbackPath(state),
+        cookies: { smart_launch: launchCookie },
+    })
+
+    assert.equal(response.statusCode, 502)
+    assert.equal(exchanges, 1)
+    assert.equal(
+        response.cookies.find((cookie) => cookie.name === 'smart_session'),
+        undefined,
+    )
+    assert.equal(
+        f.requests.some((request) => request.path === '/fhir/Patient/p1'),
+        false,
+    )
 })

@@ -90,6 +90,7 @@ interface IssuedToken {
     scopes: string[]
     expiresAt: number
     patient?: string
+    audience: string
 }
 
 interface RecordedRequest {
@@ -111,7 +112,7 @@ interface FixtureObservation {
 
 interface CreateResponse {
     status: number
-    location: 'correct' | 'missing' | 'wrong'
+    location: 'correct' | 'history' | 'missing' | 'wrong'
 }
 
 export interface Fixture {
@@ -120,7 +121,7 @@ export interface Fixture {
     patient: Patient
     encounter: Encounter
     measurements: FixtureObservation[]
-    tokens: (overrides?: Partial<Tokens>) => Promise<Tokens>
+    tokens: (overrides?: Partial<Tokens> & { audience?: string }) => Promise<Tokens>
     issued: Map<string, IssuedToken>
     requests: RecordedRequest[]
     created: Map<string, Record<string, unknown>>
@@ -154,7 +155,8 @@ export async function fixture(): Promise<Fixture> {
     let lastBody = new URLSearchParams()
     let lastAuthorization: string | undefined
 
-    async function issueTokens(overrides: Partial<Tokens> = {}): Promise<Tokens> {
+    async function issueTokens(overrides: Partial<Tokens> & { audience?: string } = {}): Promise<Tokens> {
+        const { audience = config.fhirBase, ...tokenOverrides } = overrides
         const userContext: Partial<Tokens> = {
             patient: 'p1',
             encounter: 'e1',
@@ -174,13 +176,14 @@ export async function fixture(): Promise<Fixture> {
             scope: config.scopes,
             expires_in: 300,
             ...userContext,
-            ...overrides,
+            ...tokenOverrides,
         }
 
         issued.set(tokens.access_token, {
             scopes: splitScopes(tokens.scope),
             expiresAt: Date.now() + tokens.expires_in * 1000,
             patient: tokens.patient,
+            audience,
         })
 
         return tokens
@@ -241,7 +244,12 @@ export async function fixture(): Promise<Fixture> {
             const authorization = request.headers.authorization
             const token = issued.get(authorization?.replace(/^Bearer /, '') ?? '')
 
-            if (!token || token.expiresAt <= Date.now() || !authorization?.startsWith('Bearer ')) {
+            if (
+                !token ||
+                token.expiresAt <= Date.now() ||
+                token.audience !== config.fhirBase ||
+                !authorization?.startsWith('Bearer ')
+            ) {
                 return outcome(reply, 401, 'login')
             }
 
@@ -385,8 +393,9 @@ export async function fixture(): Promise<Fixture> {
                 created.set(`${type}/${resource.id}`, resource)
 
                 if (createResponse.location !== 'missing') {
-                    const locationId = createResponse.location === 'correct' ? resource.id : 'wrong-id'
-                    reply.header('Location', `${config.fhirBase}/${type}/${locationId}`)
+                    const locationId = createResponse.location === 'wrong' ? 'wrong-id' : resource.id
+                    const history = createResponse.location === 'history' ? '/_history/1' : ''
+                    reply.header('Location', `${config.fhirBase}/${type}/${locationId}${history}`)
                 }
 
                 return reply.code(createResponse.status).send(resource)

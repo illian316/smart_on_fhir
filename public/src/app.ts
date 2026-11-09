@@ -1,5 +1,6 @@
 import cookie from '@fastify/cookie'
 import Fastify, { LogController, type FastifyInstance } from 'fastify'
+import { z } from 'zod'
 
 import {
     checkAuthorizationUrl,
@@ -14,8 +15,14 @@ import {
     checkTransaction,
 } from './checks.ts'
 import { AppError, splitScopes, type Config } from './config.ts'
-import { clinicalSummary, renderClinicalSummary } from './extensions.ts'
-import { escapeHtml, page, randomToken } from './http.ts'
+import {
+    clinicalSummary,
+    createResourceWithLocation,
+    journalNote,
+    renderClinicalSummary,
+    temperature,
+} from './extensions.ts'
+import { escapeHtml, isSameSecret, page, randomToken } from './http.ts'
 import { Attempts, renderChecklist, type Attempt } from './progress.ts'
 import { configureServer } from './server.ts'
 import { steps } from './steps.ts'
@@ -29,6 +36,25 @@ const MAX_PENDING_LAUNCHES = 1000
 const MAX_SESSIONS = 1000
 const MAX_SESSION_SECONDS = 1800
 const PROGRESS_SECONDS = 1800
+const WriteFormSchema = z.discriminatedUnion('kind', [
+    z
+        .object({
+            kind: z.literal('temperature'),
+            csrf: z.string().min(1),
+            value: z
+                .string()
+                .regex(/^-?\d{1,8}(?:\.\d{1,4})?$/)
+                .transform(Number),
+        })
+        .strict(),
+    z
+        .object({
+            kind: z.literal('note'),
+            csrf: z.string().min(1),
+            text: z.string().trim().min(1).max(2000),
+        })
+        .strict(),
+])
 
 interface PendingLaunch {
     transaction: Transaction
@@ -40,6 +66,9 @@ export async function buildApp(config: Config, implementation: Steps = steps): P
     const app = Fastify({ logger: true, logController: new LogController({ disableRequestLogging: true }) })
     configureServer(app)
     await app.register(cookie)
+    app.addContentTypeParser('application/x-www-form-urlencoded', { parseAs: 'string' }, (_request, body, done) =>
+        done(null, new URLSearchParams(String(body))),
+    )
 
     const api = implementation
     const attempts = new Attempts()
@@ -183,11 +212,74 @@ export async function buildApp(config: Config, implementation: Steps = steps): P
 
         const sessionId = randomToken()
         const maxAge = Math.min(tokens.expires_in, MAX_SESSION_SECONDS)
-        sessions.set(sessionId, { tokens, context, expiresAt: Date.now() + maxAge * 1000, attempt })
+        sessions.set(sessionId, {
+            tokens,
+            context,
+            csrfToken: randomToken(),
+            expiresAt: Date.now() + maxAge * 1000,
+            attempt,
+        })
         reply.setCookie(SESSION_COOKIE, sessionId, { ...cookieOptions, maxAge })
         reply.setCookie(PROGRESS_COOKIE, attempt.id, { ...cookieOptions, maxAge: PROGRESS_SECONDS })
 
         return reply.redirect('/app')
+    })
+
+    app.post<{ Body: URLSearchParams }>('/app/write', async (request, reply) => {
+        const session = sessions.get(request.cookies[SESSION_COOKIE] ?? '')
+
+        if (!session) {
+            throw new AppError(401, 'Session missing or expired. Launch again from the EPJ.')
+        }
+
+        if (request.headers.origin !== new URL(config.redirectUri).origin) {
+            throw new AppError(403, 'Write-back requires a same-origin request.')
+        }
+
+        const entries = [...request.body.entries()]
+        const fields = Object.fromEntries(entries)
+
+        if (entries.length !== Object.keys(fields).length) {
+            throw new AppError(400, 'Write-back form contains duplicate fields.')
+        }
+
+        const form = WriteFormSchema.safeParse(fields)
+
+        if (!form.success) {
+            throw new AppError(400, 'Enter a valid temperature or a journal note of up to 2000 characters.')
+        }
+
+        if (!isSameSecret(form.data.csrf, session.csrfToken)) {
+            throw new AppError(403, 'Write-back session check failed. Reload the consultation and try again.')
+        }
+
+        const resourceType = form.data.kind === 'temperature' ? 'Observation' : 'DocumentReference'
+
+        if (!hasCreateScope(session.tokens.scope, resourceType)) {
+            throw new AppError(403, `The ${resourceType} create scope was not granted.`)
+        }
+
+        const resource =
+            form.data.kind === 'temperature'
+                ? temperature(session.context, form.data.value)
+                : journalNote(session.context, form.data.text)
+        const { resource: created, location } = await createResourceWithLocation(config, session.tokens, resource)
+
+        if (request.headers.accept?.includes('application/json')) {
+            return reply.code(201).send({ ...created, location })
+        }
+
+        return reply
+            .code(201)
+            .type('text/html')
+            .send(
+                page(
+                    'Write-back saved',
+                    `<section class="panel"><h2>Resource saved</h2><p>${escapeHtml(created.resourceType)}/${escapeHtml(created.id)}</p>` +
+                        `<p>Location: <a href="${escapeHtml(location)}">${escapeHtml(location)}</a></p>` +
+                        '<a class="button" href="/app">Return to consultation</a></section>',
+                ),
+            )
     })
 
     app.get('/app', async (request, reply) => {
@@ -237,12 +329,58 @@ export async function buildApp(config: Config, implementation: Steps = steps): P
                 page(
                     'Active consultation',
                     `<div class="workspace">${chartContent(chart, config, session)}${clinicalContent}</div>` +
-                        `<details class="panel progress-panel"><summary>Launch diagnostics</summary>${renderChecklist(attempt.checklist())}</details>`,
+                        writebackContent(session) +
+                        `<details class="panel progress-panel"><summary>Launch diagnostics</summary>${renderChecklist(attempt.checklist())}</details>` +
+                        '<script src="/writeback.js" defer></script>',
                 ),
             )
     })
 
     return app
+}
+
+function hasCreateScope(scopeText: string, resource: string): boolean {
+    return splitScopes(scopeText).some((scope) => {
+        const [permission, interactions = ''] = scope.split('.')
+
+        return (
+            [`patient/${resource}`, `user/${resource}`, 'patient/*', 'user/*'].includes(permission ?? '') &&
+            interactions.includes('c')
+        )
+    })
+}
+
+function writebackContent(session: Session): string {
+    const observationScope = hasCreateScope(session.tokens.scope, 'Observation')
+    const noteScope = hasCreateScope(session.tokens.scope, 'DocumentReference')
+    const disabledMessage = (scope: string): string =>
+        `<p class="empty-state">Scope <code>${scope}</code> was not granted. Add it to <code>SCOPES</code>, restart the app and launch again.</p>`
+
+    return `
+        <section class="panel writeback-panel" aria-labelledby="writeback-title">
+            <h2 id="writeback-title"><span class="section-number">03</span>Write to this consultation</h2>
+            <p>Writes use the patient and encounter from this EHR launch.</p>
+            <div class="writeback-grid">
+                <form method="post" action="/app/write" data-write-form>
+                    <input type="hidden" name="kind" value="temperature">
+                    <input type="hidden" name="csrf" value="${escapeHtml(session.csrfToken)}">
+                    <label for="temperature-value">Body temperature (degrees Celsius)</label>
+                    <input id="temperature-value" name="value" type="number" min="-99999999.9999" max="99999999.9999" step="0.0001" required>
+                    <button class="button" type="submit"${observationScope ? '' : ' disabled'}>Save measurement</button>
+                    ${observationScope ? '' : disabledMessage('patient/Observation.c')}
+                </form>
+                <form method="post" action="/app/write" data-write-form>
+                    <input type="hidden" name="kind" value="note">
+                    <input type="hidden" name="csrf" value="${escapeHtml(session.csrfToken)}">
+                    <label for="journal-note">Journal note</label>
+                    <textarea id="journal-note" name="text" rows="4" maxlength="2000" required></textarea>
+                    <button class="button" type="submit"${noteScope ? '' : ' disabled'}>Save note</button>
+                    ${noteScope ? '' : disabledMessage('patient/DocumentReference.c')}
+                </form>
+            </div>
+            <p class="write-result" data-write-result aria-live="polite"></p>
+        </section>
+    `
 }
 
 function queryText(query: unknown, key: string): string | undefined {

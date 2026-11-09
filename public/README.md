@@ -24,7 +24,7 @@ FHIR_BASE_URL=https://epj.ekstern.dev.nav.no/fhir
 AUTH_ISSUER=https://epj.ekstern.dev.nav.no/oidc
 CLIENT_ID=hackathon-public
 REDIRECT_URI=http://localhost:3100/callback
-SCOPES=openid fhirUser launch patient/Patient.r patient/Encounter.s
+SCOPES=openid fhirUser launch patient/Patient.r patient/Encounter.s patient/Observation.cr patient/DocumentReference.c
 ```
 
 `hackathon-public` is already registered, so there is nothing to send the host.
@@ -41,9 +41,9 @@ npm start
 
 Log in at https://epj.ekstern.dev.nav.no with your own test clinician, open a patient marked "Pågår nå" and pick **Hackathon starter** in the app picker.
 
-The page lists ten steps grouped by the [SMART App Launch](https://build.fhir.org/ig/HL7/smart-app-launch/en/app-launch.html) phases. Each step shows ✅, ❌ or ⬜ with a hint and the next action. The first launch fails at TODO 1.
+The page lists ten steps grouped by the [SMART App Launch](https://build.fhir.org/ig/HL7/smart-app-launch/en/app-launch.html) phases. Each step shows ✅, ❌ or ⬜ with a hint and the next action. The first launch fails at TODO 1. The sample scopes include create permission for body-temperature Observations and journal notes; after changing `SCOPES`, restart the app and launch again from the EHR.
 
-The public app uses a responsive dark clinical workspace with patient context, scope panels and a temperature trend. Expand **View all readings & clinical codes** for source measurements and **Launch diagnostics** for the step checklist. Styles are served locally from `/styles.css`; no external fonts, scripts or UI services are used. The landing page does not load patient data: a valid EHR launch is still required.
+The public app uses a responsive, Windows XP-inspired clinical workspace with patient context, scope panels and a temperature trend. Expand **View all readings & clinical codes** for source measurements and **Launch diagnostics** for the step checklist. Styles are served locally from `/styles.css`, and `/writeback.js` submits consultation forms to the same-origin `/app/write` route. The Content Security Policy permits these same-origin requests with `connect-src 'self'`; external connections remain blocked. No external fonts, scripts or UI services are used. The landing page does not load patient data: a valid EHR launch is still required.
 
 ## 5. Build your own
 

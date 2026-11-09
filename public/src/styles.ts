@@ -126,6 +126,16 @@ time { font-variant-numeric: tabular-nums; }
 .progress-panel li { font-size: 13px; color: var(--muted); padding: 8px 0; overflow-wrap: anywhere; }
 .progress-panel li p { margin: 8px 0; }
 .progress-panel h3 a { text-decoration: none; }
+.writeback-panel { margin-top: 24px; }
+.writeback-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 20px; }
+.writeback-grid form { display: grid; align-content: start; gap: 10px; padding: 18px; border: 1px solid #93b4d2; border-radius: 5px; background: linear-gradient(#f8fbff, #e5eef7); }
+.writeback-grid label { font-size: 13px; font-weight: 600; }
+.writeback-grid input:not([type="hidden"]), .writeback-grid textarea { width: 100%; padding: 10px; border: 1px solid #829fbb; border-radius: 4px; background: white; color: var(--text); font: inherit; box-shadow: inset 1px 1px 2px #b9c6d5; }
+.writeback-grid .button { justify-self: start; cursor: pointer; }
+.writeback-grid .button:disabled { cursor: not-allowed; opacity: .55; filter: grayscale(.7); }
+.writeback-grid .empty-state { margin: 0; padding: 10px; font-size: 12px; }
+.write-result { overflow-wrap: anywhere; }
+.write-result a { font-weight: 600; }
 .hero { position: relative; overflow: hidden; min-height: 350px; display: grid; grid-template-columns: 1.2fr 1fr; align-items: center; padding: clamp(24px, 5vw, 60px); }
 .hero h2 { font-size: clamp(30px, 4vw, 52px); line-height: 1.15; max-width: 600px; margin: 18px 0; letter-spacing: -.045em; }
 .hero h2 span { color: var(--orange); }
@@ -151,7 +161,7 @@ time { font-variant-numeric: tabular-nums; }
     .protocol, .page-heading > .eyebrow { display: none; }
     main { padding: 28px 16px 40px; }
     .panel { padding: 22px; border-radius: 16px; }
-    .hero, .guide-grid, .context-column { grid-template-columns: 1fr; }
+    .hero, .guide-grid, .context-column, .writeback-grid { grid-template-columns: 1fr; }
     .orbital { margin: 36px auto 12px; width: 180px; height: 180px; }
     .orbital-core { width: 100px; height: 100px; font-size: 54px; }
     .footer { flex-direction: column; gap: 4px; }

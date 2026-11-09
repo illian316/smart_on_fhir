@@ -1,7 +1,7 @@
 import { z } from 'zod'
 
 import { AppError, type Config } from './config.ts'
-import { bundle, escapeHtml, fhir, fhirUrl, IdSchema, referenceId, request, searchPath } from './http.ts'
+import { bundle, escapeHtml, fhir, fhirUrl, IdSchema, request, searchPath } from './http.ts'
 import type { Context, Tokens } from './types.ts'
 
 const LOINC_SYSTEM = 'http://loinc.org'
@@ -119,7 +119,11 @@ const JournalNoteWriteSchema = z
 
 type Condition = z.infer<typeof ConditionSchema>
 type Measurement = z.infer<typeof ObservationSchema>
-type CreatedResource = z.infer<typeof CreatedResourceSchema>
+export type CreatedResource = z.infer<typeof CreatedResourceSchema>
+export interface CreatedResourceResult {
+    resource: CreatedResource
+    location: string
+}
 export type TemperatureObservation = z.infer<typeof ObservationWriteSchema>
 export type JournalNote = z.infer<typeof JournalNoteWriteSchema>
 
@@ -286,6 +290,14 @@ export async function createResource(
     tokens: Tokens,
     resource: TemperatureObservation | JournalNote,
 ): Promise<CreatedResource> {
+    return (await createResourceWithLocation(config, tokens, resource)).resource
+}
+
+export async function createResourceWithLocation(
+    config: Config,
+    tokens: Tokens,
+    resource: TemperatureObservation | JournalNote,
+): Promise<CreatedResourceResult> {
     const writeResource =
         resource.resourceType === 'Observation'
             ? ObservationWriteSchema.parse(resource)
@@ -302,14 +314,30 @@ export async function createResource(
 
     const created = CreatedResourceSchema.parse(await response.json())
     const location = response.headers.get('Location')
+    const safeLocation = location ? fhirUrl(config, location) : undefined
+    const locationId = safeLocation ? createdLocationId(config, safeLocation, writeResource.resourceType) : undefined
 
     const isCreatedResponse = response.status === 201 && created.resourceType === writeResource.resourceType
 
-    if (!isCreatedResponse || !location || referenceId(config, location, writeResource.resourceType) !== created.id) {
+    if (!isCreatedResponse || !safeLocation || locationId !== created.id) {
         throw new AppError(502, 'Create response must be 201 with a server ID and matching Location.')
     }
 
-    return created
+    return { resource: created, location: safeLocation }
+}
+
+function createdLocationId(config: Config, location: string, type: string): string {
+    const url = new URL(location)
+    const basePath = new URL(config.fhirBase).pathname.replace(/\/$/, '')
+    const prefix = `${basePath}/${type}/`
+    const resourcePath = url.pathname.startsWith(prefix) ? url.pathname.slice(prefix.length) : ''
+    const match = resourcePath.match(/^([A-Za-z0-9.-]{1,64})(?:\/_history\/[A-Za-z0-9.-]{1,64})?$/)
+
+    if (url.search || !match) {
+        throw new AppError(502, 'Create response must include a valid Location for the created resource.')
+    }
+
+    return IdSchema.parse(match[1])
 }
 
 function resourceReference(type: 'Patient' | 'Encounter', id: string): { reference: string } {
