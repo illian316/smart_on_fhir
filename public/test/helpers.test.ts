@@ -4,8 +4,37 @@ import { z } from 'zod'
 
 import { configProblems, readConfig } from '../src/config.ts'
 import { age, bundle, fhirUrl, isSameSecret, json, PatientSchema, referenceId } from '../src/http.ts'
+import { steps } from '../src/steps.ts'
 
 import { fixture } from './fixture.ts'
+
+test('TODO 1: readLaunch accepts only the configured issuer and a non-empty launch string', () => {
+    const config = readConfig({
+        FHIR_BASE_URL: 'https://ehr.example/fhir',
+        AUTH_ISSUER: 'https://ehr.example/oidc',
+        CLIENT_ID: 'test-client',
+        SCOPES: 'launch',
+    })
+    const query = { iss: config.fhirBase, launch: 'synthetic-launch-id' }
+
+    assert.deepEqual(steps.readLaunch({ ...query, extra: 'ignored' }, config), query)
+
+    const invalidQueries = [
+        null,
+        {},
+        { ...query, iss: 'https://wrong.example/fhir' },
+        { ...query, iss: `${config.fhirBase}/` },
+        { ...query, iss: [config.fhirBase] },
+        { iss: config.fhirBase },
+        { ...query, launch: '' },
+        { ...query, launch: 123 },
+        { ...query, launch: ['synthetic-launch-id'] },
+    ]
+
+    for (const invalidQuery of invalidQueries) {
+        assert.throws(() => steps.readLaunch(invalidQuery, config), z.ZodError)
+    }
+})
 
 test('Scaffolding: host configuration is validated without event access', async (t) => {
     const f = await fixture()

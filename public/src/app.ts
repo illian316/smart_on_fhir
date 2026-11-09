@@ -13,7 +13,8 @@ import {
     checkTokens,
     checkTransaction,
 } from './checks.ts'
-import { AppError, type Config } from './config.ts'
+import { AppError, splitScopes, type Config } from './config.ts'
+import { clinicalSummary, renderClinicalSummary } from './extensions.ts'
 import { escapeHtml, page, randomToken } from './http.ts'
 import { Attempts, renderChecklist, type Attempt } from './progress.ts'
 import { configureServer } from './server.ts'
@@ -72,11 +73,27 @@ export async function buildApp(config: Config, implementation: Steps = steps): P
 
     app.get('/', async (request, reply) => {
         const attempt = attempts.get(request.cookies[PROGRESS_COOKIE])
-        const intro =
-            '<p>Launch this app from the EPJ app picker. Opening this page does not create patient context.</p>'
+        const intro = `
+            <section class="panel hero" aria-labelledby="welcome-title">
+                <div>
+                    <span class="badge">EHR-connected workspace</span>
+                    <h2 id="welcome-title">A clearer view.<br><span>A connected consultation.</span></h2>
+                    <p>Patient context, clinical insights and your SMART launch journey. One focused workspace.</p>
+                    <a class="button" href="#launch-guide">Explore the launch flow <span aria-hidden="true">&nbsp; &rarr;</span></a>
+                </div>
+                <div class="orbital" aria-hidden="true"><div class="orbital-core">+</div></div>
+            </section>
+            <section id="launch-guide" class="guide-grid" aria-label="Getting started">
+                <article class="panel"><span class="eyebrow">01 / Launch</span><h3>Start in your EHR</h3>
+                    <p>Launch this app from the EPJ app picker. Opening this page does not create patient context.</p></article>
+                <article class="panel"><span class="eyebrow">02 / Connect</span><h3>Bring the right context</h3>
+                    <p>The SMART authorization flow supplies the patient, encounter and permissions for your consultation.</p></article>
+                <article class="panel"><span class="eyebrow">03 / Explore</span><h3>Focus on the patient</h3>
+                    <p>Review encounter diagnoses and coded temperature readings when clinical search permissions are granted.</p></article>
+            </section>`
         const progress = attempt ? renderChecklist(attempt.checklist()) : ''
 
-        return reply.type('text/html').send(page('SMART public starter', intro + progress))
+        return reply.type('text/html').send(page('Your clinical launchpad', intro + progress))
     })
 
     app.get('/launch', async (request, reply) => {
@@ -186,13 +203,41 @@ export async function buildApp(config: Config, implementation: Steps = steps): P
             async () => api.loadChart(config, session.tokens, session.context),
             (value) => checkChart(value, session.context),
         )
+        const scopes = splitScopes(session.tokens.scope)
+        const canSearch = (resource: string): boolean =>
+            scopes.some((scope) => {
+                const [permission, interactions = ''] = scope.split('.')
+
+                return (
+                    [`patient/${resource}`, `user/${resource}`, 'patient/*', 'user/*'].includes(permission ?? '') &&
+                    (interactions.includes('s') || interactions === 'read' || interactions === '*')
+                )
+            })
+        let clinicalContent =
+            '<section class="panel"><h2>Clinical Summary</h2><p class="empty-state">Unavailable: clinical search permissions were not granted.</p></section>'
+
+        if (canSearch('Condition') && canSearch('Observation')) {
+            try {
+                const summary = api.clinicalSummary
+                    ? await api.clinicalSummary(config, session.tokens, session.context)
+                    : await clinicalSummary(config, session.tokens, session.context)
+                clinicalContent = renderClinicalSummary(summary)
+            } catch (error) {
+                if (!(error instanceof AppError)) {
+                    throw error
+                }
+
+                clinicalContent = `<section class="panel"><h2>Clinical Summary</h2><p class="empty-state">Unavailable: ${escapeHtml(error.message)}</p></section>`
+            }
+        }
 
         return reply
             .type('text/html')
             .send(
                 page(
                     'Active consultation',
-                    chartContent(chart, config, session) + renderChecklist(attempt.checklist()),
+                    `<div class="workspace">${chartContent(chart, config, session)}${clinicalContent}</div>` +
+                        `<details class="panel progress-panel"><summary>Launch diagnostics</summary>${renderChecklist(attempt.checklist())}</details>`,
                 ),
             )
     })
@@ -206,26 +251,46 @@ function queryText(query: unknown, key: string): string | undefined {
     return typeof value === 'string' ? value : undefined
 }
 
-const CHART_FIELDS: (keyof Chart)[] = [
-    'patientName',
-    'age',
-    'encounter',
-    'status',
-    'started',
-    'clinician',
-    'organization',
-    'practitionerRoles',
-]
+const CHART_FIELDS = {
+    age: 'Age',
+    encounter: 'Encounter',
+    started: 'Started',
+    clinician: 'Clinician',
+    organization: 'Organization',
+    practitionerRoles: 'Practitioner roles',
+} satisfies Partial<Record<keyof Chart, string>>
 
 function chartContent(chart: Chart, config: Config, session: Session): string {
-    const rows = CHART_FIELDS.filter((key) => key in chart)
-        .map((key) => `<dt>${key}</dt><dd>${escapeHtml(chart[key] ?? 'Not available')}</dd>`)
+    const rows = (Object.keys(CHART_FIELDS) as (keyof typeof CHART_FIELDS)[])
+        .filter((key) => key in chart)
+        .map(
+            (key) =>
+                `<div class="context-field"><dt>${CHART_FIELDS[key]}</dt><dd>${escapeHtml(chart[key] ?? 'Not available')}</dd></div>`,
+        )
+        .join('')
+    const initials = chart.patientName
+        .trim()
+        .split(/\s+/)
+        .slice(0, 2)
+        .map((part) => part.charAt(0))
         .join('')
 
     return `
-        <dl>${rows}</dl>
-        <h2>Scopes</h2>
-        <p>Requested: ${escapeHtml(config.scopes)}</p>
-        <p>Granted: ${escapeHtml(session.tokens.scope)}</p>
+        <aside class="context-column" aria-label="Consultation context">
+            <section class="panel" aria-labelledby="patient-title">
+                <div class="patient-heading">
+                    <div class="avatar" aria-hidden="true">${escapeHtml(initials)}</div>
+                    <span class="eyebrow">Patient context</span>
+                    <h2 class="patient-name" id="patient-title">${escapeHtml(chart.patientName)}</h2>
+                    <span class="badge">${escapeHtml(chart.status)}</span>
+                </div>
+                <dl>${rows}</dl>
+            </section>
+            <section class="panel" aria-labelledby="scopes-title">
+                <h2 id="scopes-title"><span class="section-number">/</span>Scopes</h2>
+                <span class="scope-label">Requested</span><p class="scope-text">${escapeHtml(config.scopes)}</p>
+                <span class="scope-label">Granted</span><p class="scope-text">${escapeHtml(session.tokens.scope)}</p>
+            </section>
+        </aside>
     `
 }

@@ -43,6 +43,8 @@ Log in at https://epj.ekstern.dev.nav.no with your own test clinician, open a pa
 
 The page lists ten steps grouped by the [SMART App Launch](https://build.fhir.org/ig/HL7/smart-app-launch/en/app-launch.html) phases. Each step shows ✅, ❌ or ⬜ with a hint and the next action. The first launch fails at TODO 1.
 
+The public app uses a responsive dark clinical workspace with patient context, scope panels and a temperature trend. Expand **View all readings & clinical codes** for source measurements and **Launch diagnostics** for the step checklist. Styles are served locally from `/styles.css`; no external fonts, scripts or UI services are used. The landing page does not load patient data: a valid EHR launch is still required.
+
 ## 5. Build your own
 
 Implement the next TODO in [src/steps.ts](./src/steps.ts), then retry:

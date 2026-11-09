@@ -277,7 +277,7 @@ test('Progress: shape-correct steps reach the chart with every step passing and 
     assert.match(chart.body, /<h2>Before you build<\/h2>/)
     assert.match(chart.body, /network tab/)
     assert.match(chart.body, /public\/EXERCISES\.md#problem-cards/)
-    assert.match(chart.body, /<dt>clinician<\/dt><dd>Test clinician<\/dd>/)
+    assert.match(chart.body, /<dt>Clinician<\/dt><dd>Test clinician<\/dd>/)
     assert.doesNotMatch(chart.body, /<dt>(access_token|refresh_token)<\/dt>|leaked-refresh-token/)
     assert.equal(chart.body.includes((await f.tokens()).access_token), false)
 })

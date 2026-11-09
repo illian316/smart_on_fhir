@@ -395,10 +395,12 @@ export function renderChecklist(checklist: Checklist): string {
     const passed = checklist.filter((item) => item.state === 'passed').length
 
     return `
+        <section class="panel progress-panel" aria-label="SMART launch progress">
         <h2>Progress: ${passed} of ${STEP_COUNT} steps OK</h2>
         <p>✅ means the returned value has the right shape. It is not a security certification. See <a href="${BREAK_IT}">Break it</a> for checks that provoke real rejections.</p>
         <p>Saving a file restarts the app and clears this progress and all sessions.</p>
         ${phases}
         ${passed === STEP_COUNT ? renderBeforeYouBuild() : ''}
+        </section>
     `
 }

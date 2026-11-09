@@ -218,12 +218,29 @@ export function page(title: string, content: string): string {
                 <meta charset="utf-8">
                 <meta name="viewport" content="width=device-width">
                 <title>${heading}</title>
+                <link rel="stylesheet" href="/styles.css">
             </head>
             <body>
-                <main>
-                    <h1>${heading}</h1>
+                <a class="skip-link" href="#main">Skip to content</a>
+                <header class="topbar">
+                    <a class="brand" href="/" aria-label="SMART on FHIR home">
+                        <span class="brand-mark" aria-hidden="true">+</span>
+                        <span><strong>SMART / FHIR</strong><small>CLINICAL WORKSPACE</small></span>
+                    </a>
+                    <nav aria-label="Main navigation">
+                        <a href="/">Overview</a>
+                        <a href="#main">Workspace</a>
+                        <span class="protocol">EHR LAUNCH / PKCE</span>
+                    </nav>
+                </header>
+                <main id="main" tabindex="-1">
+                    <div class="page-heading">
+                        <div><span class="eyebrow">Connected care, in context</span><h1>${heading}</h1></div>
+                        <span class="eyebrow">SMART ON FHIR / PUBLIC CLIENT</span>
+                    </div>
                     ${content}
                 </main>
+                <footer class="footer"><span>SMART ON FHIR / Clinical workspace</span><span>Patient context comes from your EHR launch.</span></footer>
             </body>
         </html>
     `.trim()

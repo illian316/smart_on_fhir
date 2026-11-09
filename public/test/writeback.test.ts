@@ -122,3 +122,51 @@ for (const type of RESOURCE_TYPES) {
         assert.equal(f.created.size, 4, 'Do not automatically retry writes with uncertain outcomes')
     })
 }
+
+test('Reference write shapes reject unsupported fields and invalid measurements before POST', async (t) => {
+    const f = await fixture()
+    t.after(f.close)
+
+    const tokens = await f.tokens({ scope: 'patient/Observation.cr patient/DocumentReference.cr' })
+    const observation = extensions.temperature(launchContext, 37.2, MEASURED_AT)
+    const note = extensions.journalNote(launchContext, 'Synthetic note')
+    const observationWithComponent = { ...observation, component: [] }
+    const noteWithCategory = { ...note, category: [] }
+    const noteWithAttachmentData = {
+        ...note,
+        content: [{ attachment: { contentType: 'application/pdf' as const, data: 'unsupported' } }],
+    }
+    const requestCount = f.requests.length
+
+    assert.equal(observation.code.coding.length, 1)
+    assert.match(observation.effectiveDateTime, /Z$/)
+    assert.equal(
+        extensions.temperature(launchContext, 99_999_999.9999, MEASURED_AT).valueQuantity.value,
+        99_999_999.9999,
+    )
+    assert.throws(() => extensions.temperature(launchContext, 1.23456, MEASURED_AT))
+    assert.throws(() => extensions.temperature(launchContext, 100_000_000, MEASURED_AT))
+
+    await assert.rejects(
+        extensions.createResource(f.config, tokens, {
+            ...observation,
+            code: {
+                coding: [
+                    ...observation.code.coding,
+                    { system: 'http://loinc.org', code: '29463-7', display: 'Body weight' },
+                ],
+            },
+        }),
+    )
+    await assert.rejects(
+        extensions.createResource(f.config, tokens, {
+            ...observation,
+            effectiveDateTime: '2026-01-01T10:00:00+01:00',
+        }),
+    )
+    await assert.rejects(extensions.createResource(f.config, tokens, observationWithComponent))
+    await assert.rejects(extensions.createResource(f.config, tokens, noteWithCategory))
+    await assert.rejects(extensions.createResource(f.config, tokens, noteWithAttachmentData))
+
+    assert.equal(f.requests.length, requestCount, 'Invalid shapes must be rejected before reaching the FHIR server')
+})

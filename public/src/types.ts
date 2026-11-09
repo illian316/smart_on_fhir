@@ -1,6 +1,7 @@
 import { z } from 'zod'
 
 import type { Config } from './config.ts'
+import type { ClinicalSummary } from './extensions.ts'
 import { IdSchema } from './http.ts'
 import type { Attempt } from './progress.ts'
 
@@ -85,4 +86,5 @@ export interface Steps {
     verifyIdentity(config: Config, discovery: Discovery, tokens: Tokens): Promise<string>
     launchContext(tokens: Tokens, practitioner: string): Context
     loadChart(config: Config, tokens: Tokens, context: Context): Promise<Chart>
+    clinicalSummary?(config: Config, tokens: Tokens, context: Context): Promise<ClinicalSummary>
 }

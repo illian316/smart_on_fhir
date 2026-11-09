@@ -3,8 +3,10 @@ import type { FastifyInstance } from 'fastify'
 import { AppError } from './config.ts'
 import { escapeHtml, page } from './http.ts'
 import { renderChecklist, StepError } from './progress.ts'
+import { stylesheet } from './styles.ts'
 
-const CONTENT_SECURITY_POLICY = "default-src 'none'; frame-ancestors 'none'; form-action 'self'; base-uri 'none'"
+const CONTENT_SECURITY_POLICY =
+    "default-src 'none'; style-src 'self'; frame-ancestors 'none'; form-action 'self'; base-uri 'none'"
 
 const UNEXPECTED_ERROR = {
     status: 502,
@@ -13,6 +15,8 @@ const UNEXPECTED_ERROR = {
 }
 
 export function configureServer(app: FastifyInstance): void {
+    app.get('/styles.css', async (_request, reply) => reply.type('text/css').send(stylesheet))
+
     app.addHook('onSend', async (_request, reply) => {
         reply.header('Cache-Control', 'no-store')
         reply.header('Referrer-Policy', 'same-origin')
