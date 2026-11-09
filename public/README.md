@@ -31,6 +31,8 @@ SCOPES=openid fhirUser launch patient/Patient.r patient/Encounter.s patient/Cond
 
 The clinical summary requires `patient/Condition.s` and `patient/Observation.s` (included in `.crs` above). Saving a temperature refreshes the summary from the FHIR server, including newly written readings. Values show their LOINC code system and UCUM unit; the trend requires at least three readings in one unit. Mixed units are rejected rather than compared. Journal notes are narrative documents, not measurement readings.
 
+Temperature writes accept 25-45 degrees Celsius inclusive, with up to four decimal places. The browser, POST handler and temperature builder enforce this input guard; it is not a normal-temperature range or clinical recommendation. Existing readings are not filtered by this write constraint.
+
 ## 3. Start
 
 ```sh

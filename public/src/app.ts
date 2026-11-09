@@ -21,6 +21,9 @@ import {
     journalNote,
     renderClinicalSummary,
     temperature,
+    TemperatureValueSchema,
+    TEMPERATURE_MIN_CELSIUS,
+    TEMPERATURE_MAX_CELSIUS,
 } from './extensions.ts'
 import { escapeHtml, isSameSecret, page, randomToken } from './http.ts'
 import { Attempts, renderChecklist, type Attempt } from './progress.ts'
@@ -44,7 +47,8 @@ const WriteFormSchema = z.discriminatedUnion('kind', [
             value: z
                 .string()
                 .regex(/^-?\d{1,8}(?:\.\d{1,4})?$/)
-                .transform(Number),
+                .transform(Number)
+                .pipe(TemperatureValueSchema),
         })
         .strict(),
     z
@@ -246,7 +250,10 @@ export async function buildApp(config: Config, implementation: Steps = steps): P
         const form = WriteFormSchema.safeParse(fields)
 
         if (!form.success) {
-            throw new AppError(400, 'Enter a valid temperature or a journal note of up to 2000 characters.')
+            throw new AppError(
+                400,
+                `Enter a temperature from ${TEMPERATURE_MIN_CELSIUS} to ${TEMPERATURE_MAX_CELSIUS} degrees Celsius with at most four decimals, or a journal note of up to 2000 characters.`,
+            )
         }
 
         if (!isSameSecret(form.data.csrf, session.csrfToken)) {
@@ -365,7 +372,8 @@ function writebackContent(session: Session): string {
                     <input type="hidden" name="kind" value="temperature">
                     <input type="hidden" name="csrf" value="${escapeHtml(session.csrfToken)}">
                     <label for="temperature-value">Body temperature (degrees Celsius)</label>
-                    <input id="temperature-value" name="value" type="number" min="-99999999.9999" max="99999999.9999" step="0.0001" required>
+                    <input id="temperature-value" name="value" type="number" min="${TEMPERATURE_MIN_CELSIUS}" max="${TEMPERATURE_MAX_CELSIUS}" step="0.0001" aria-describedby="temperature-hint" required>
+                    <small id="temperature-hint">Allowed: ${TEMPERATURE_MIN_CELSIUS}-${TEMPERATURE_MAX_CELSIUS} degrees Celsius, up to four decimals. This is an input guard, not a normal-temperature range.</small>
                     <button class="button" type="submit"${observationScope ? '' : ' disabled'}>Save measurement</button>
                     ${observationScope ? '' : disabledMessage('patient/Observation.c')}
                 </form>

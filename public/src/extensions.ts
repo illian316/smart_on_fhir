@@ -61,6 +61,10 @@ const QuantityValueSchema = z
     .max(99_999_999.9999)
     .refine((value) => Number(value.toFixed(4)) === value)
 
+export const TEMPERATURE_MIN_CELSIUS = 25
+export const TEMPERATURE_MAX_CELSIUS = 45
+export const TemperatureValueSchema = QuantityValueSchema.min(TEMPERATURE_MIN_CELSIUS).max(TEMPERATURE_MAX_CELSIUS)
+
 const ObservationWriteSchema = z
     .object({
         resourceType: z.literal('Observation'),
@@ -79,6 +83,19 @@ const ObservationWriteSchema = z
             .strict(),
     })
     .strict()
+    .superRefine((resource, ctx) => {
+        if (
+            resource.code.coding.some((coding) => coding.code === BODY_TEMPERATURE_LOINC) &&
+            resource.valueQuantity.code === 'Cel' &&
+            !TemperatureValueSchema.safeParse(resource.valueQuantity.value).success
+        ) {
+            ctx.addIssue({
+                code: 'custom',
+                path: ['valueQuantity', 'value'],
+                message: 'Body temperature must be between 25 and 45 degrees Celsius, with at most four decimals.',
+            })
+        }
+    })
 
 const JournalNoteWriteSchema = z
     .object({
@@ -269,6 +286,8 @@ function measurementCodes(measurement: Measurement): string {
 }
 
 export function temperature(context: Context, celsius: number, effective = new Date()): TemperatureObservation {
+    TemperatureValueSchema.parse(celsius)
+
     return ObservationWriteSchema.parse({
         resourceType: 'Observation',
         status: 'final',

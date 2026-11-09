@@ -156,11 +156,18 @@ test('Reference write shapes reject unsupported fields and invalid measurements 
 
     assert.equal(observation.code.coding.length, 1)
     assert.match(observation.effectiveDateTime, /Z$/)
-    assert.equal(
-        extensions.temperature(launchContext, 99_999_999.9999, MEASURED_AT).valueQuantity.value,
-        99_999_999.9999,
-    )
-    assert.throws(() => extensions.temperature(launchContext, 1.23456, MEASURED_AT))
+    assert.equal(extensions.temperature(launchContext, 25, MEASURED_AT).valueQuantity.value, 25)
+    assert.equal(extensions.temperature(launchContext, 45, MEASURED_AT).valueQuantity.value, 45)
+    assert.equal(extensions.temperature(launchContext, 37.1234, MEASURED_AT).valueQuantity.value, 37.1234)
+    for (const invalid of [-1, 0, 24.9999, 45.0001, 50, Infinity, NaN, 37.12345]) {
+        assert.throws(() => extensions.temperature(launchContext, invalid, MEASURED_AT))
+        await assert.rejects(
+            extensions.createResource(f.config, tokens, {
+                ...observation,
+                valueQuantity: { ...observation.valueQuantity, value: invalid },
+            }),
+        )
+    }
     assert.throws(() => extensions.temperature(launchContext, 100_000_000, MEASURED_AT))
 
     await assert.rejects(
@@ -207,6 +214,28 @@ test('Consultation view writes launch-bound measurements and notes with CSRF and
     assert.match(view.body, /name="kind" value="note"/)
     assert.match(view.body, /<script src="\/writeback\.js" defer><\/script>/)
     assert.ok(csrf, 'Render a session-bound CSRF token into the forms')
+    assert.match(view.body, /min="25" max="45"/)
+
+    for (const value of ['0', '-1', '24.9999', '45.0001', '50', '', 'NaN', 'Infinity', '37.12345']) {
+        const rejected: InjectResponse = await app.inject({
+            method: 'POST',
+            url: '/app/write',
+            cookies,
+            headers: {
+                origin: new URL(f.config.redirectUri).origin,
+                accept: 'application/json',
+                'content-type': 'application/x-www-form-urlencoded',
+            },
+            payload: new URLSearchParams({ kind: 'temperature', csrf, value }).toString(),
+        })
+        assert.equal(rejected.statusCode, 400, `Reject temperature ${value}`)
+        assert.match(rejected.body, /temperature from 25 to 45/)
+    }
+    assert.equal(f.created.size, 0)
+    assert.equal(
+        f.requests.some((request) => request.method === 'POST'),
+        false,
+    )
 
     for (const [kind, field, value, type] of [
         ['temperature', 'value', '37.4', 'Observation'],
